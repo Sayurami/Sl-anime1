@@ -10,7 +10,7 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // 1. සෙවීම (Search) - Movies සහ TV Shows දෙකම මෙතැනින් එනවා
+    // 1. සෙවුම් (Search)
     if (action === "search") {
       const { data } = await axios.get(`https://animeclub2.com/?s=${encodeURIComponent(query)}`, { headers });
       const $ = cheerio.load(data);
@@ -26,13 +26,12 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: results });
     }
 
-    // 2. විස්තර ගැනීම (TV Show එකක එපිසෝඩ් ලිස්ට් එක ගන්න)
+    // 2. විස්තර ගැනීම (TV Show එපිසෝඩ් හෝ Movie Info)
     if (action === "details" || action === "anime") {
       const { data } = await axios.get(url, { headers });
       const $ = cheerio.load(data);
       const episodes = [];
 
-      // එපිසෝඩ් පවතිනවා නම් ඒවා එකතු කරගැනීම
       $(".episodios li").each((i, el) => {
         episodes.push({
           ep_num: $(el).find(".numerando").text().trim(),
@@ -52,18 +51,18 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. ඩවුන්ලෝඩ් (Movie එකක හෝ Episode එකක Quality ලින්ක්ස් ටික ගැනීම)
+    // 3. ඩවුන්ලෝඩ් ලින්ක්ස් (480p, 720p, 1080p සියල්ල)
     if (action === "download") {
       const { data: pageHtml } = await axios.get(url, { headers });
       const $page = cheerio.load(pageHtml);
       const linkPages = [];
 
-      // Screenshot එකේ විදිහට Table එකේ තියෙන ලින්ක්ස් හොයාගැනීම
+      // ටේබල් එකේ ඇති '/links/' අඩංගු සියලුම බට්න් පරීක්ෂා කිරීම
       $page("a[href*='/links/']").each((i, el) => {
           const rowLink = $page(el).attr("href");
-          // අදාළ Quality එක (480p, 720p, 1080p) අඳුරගැනීම
           let qTxt = $page(el).closest("tr").find("td").text().trim() || $page(el).text().trim();
           
+          // පිරිසිදු Quality ලේබල් සැකසීම
           if (qTxt.includes("1080p")) qTxt = "Full HD 1080p";
           else if (qTxt.includes("720p")) qTxt = "HD 720p";
           else if (qTxt.includes("480p")) qTxt = "SD 480p";
@@ -76,7 +75,6 @@ export default async function handler(req, res) {
 
       const final_links = [];
 
-      // හැම ලින්ක් පේජ් එකකටම ගිහින් Drive ලින්ක් එක ගැනීම
       for (const item of linkPages) {
           try {
               const { data: linkHtml } = await axios.get(item.rowLink, { headers });
