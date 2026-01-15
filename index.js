@@ -10,7 +10,7 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // 1. සෙවුම් (Search)
+    // 1. සෙවීම (Search)
     if (action === "search") {
       const { data } = await axios.get(`https://animeclub2.com/?s=${encodeURIComponent(query)}`, { headers });
       const $ = cheerio.load(data);
@@ -26,12 +26,13 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: results });
     }
 
-    // 2. විස්තර ගැනීම (TV Show එපිසෝඩ් හෝ Movie Info)
+    // 2. විස්තර ගැනීම (Details - Movies & TV Shows)
     if (action === "details" || action === "anime") {
       const { data } = await axios.get(url, { headers });
       const $ = cheerio.load(data);
       const episodes = [];
 
+      // එපිසෝඩ් තියෙනවා නම් (TV Show) ඒවා ලිස්ට් එකට එකතු කරයි
       $(".episodios li").each((i, el) => {
         episodes.push({
           ep_num: $(el).find(".numerando").text().trim(),
@@ -51,22 +52,21 @@ export default async function handler(req, res) {
       });
     }
 
-    // 3. ඩවුන්ලෝඩ් ලින්ක්ස් (480p, 720p, 1080p සියල්ල)
+    // 3. ඩවුන්ලෝඩ් (Download - 480p, 720p, 1080p)
     if (action === "download") {
       const { data: pageHtml } = await axios.get(url, { headers });
       const $page = cheerio.load(pageHtml);
       const linkPages = [];
 
-      // ටේබල් එකේ ඇති '/links/' අඩංගු සියලුම බට්න් පරීක්ෂා කිරීම
+      // පේජ් එකේ තියෙන සියලුම Download ලින්ක්ස් (Direct & Table) පරීක්ෂා කිරීම
       $page("a[href*='/links/']").each((i, el) => {
           const rowLink = $page(el).attr("href");
           let qTxt = $page(el).closest("tr").find("td").text().trim() || $page(el).text().trim();
           
-          // පිරිසිදු Quality ලේබල් සැකසීම
           if (qTxt.includes("1080p")) qTxt = "Full HD 1080p";
           else if (qTxt.includes("720p")) qTxt = "HD 720p";
           else if (qTxt.includes("480p")) qTxt = "SD 480p";
-          else qTxt = "Direct Download";
+          else qTxt = "Download";
 
           if (rowLink && !linkPages.some(p => p.rowLink === rowLink)) {
               linkPages.push({ quality: qTxt, rowLink });
@@ -83,6 +83,7 @@ export default async function handler(req, res) {
               if (driveMatch) {
                   const fileId = driveMatch[0].match(/[-\w]{25,}/);
                   if (fileId) {
+                      // G-Drive ලින්ක් එක කෙලින්ම ඩවුන්ලෝඩ් වෙන විදිහට සකස් කිරීම
                       const directLink = `https://drive.usercontent.google.com/download?id=${fileId[0]}&export=download&authuser=0`;
                       if (!final_links.some(l => l.direct_link === directLink)) {
                           final_links.push({ quality: item.quality, direct_link: directLink });
