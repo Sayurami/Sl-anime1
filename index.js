@@ -34,49 +34,57 @@ export default async function handler(req, res) {
       $(".episodios li").each((i, el) => {
         episodes.push({
           ep_num: $(el).find(".numerando").text().trim(),
+          title: $(el).find(".episodiotitle a").text().trim(),
           link: $(el).find(".episodiotitle a").attr("href")
         });
       });
       return res.json({ status: true, data: { episodes } });
     }
 
-    // ---------------- 3. DOWNLOAD (MULTI-STEP SCAN) ----------------
+    // ---------------- 3. DOWNLOAD (QUALITY දෙකම ගන්න විදිහ) ----------------
     if (action === "download") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
-      // පියවර A: එපිසෝඩ් පේජ් එකට ගොස් '/links/' URL එක සොයා ගැනීම
+      // පියවර 1: එපිසෝඩ් පේජ් එකට ගිහින් එතන තියෙන ඔක්කොම '/links/' URL ටික ගන්නවා
       const { data: epHtml } = await axios.get(url, { headers });
       const $ep = cheerio.load(epHtml);
-      let redirectLink = "";
+      const linkPages = [];
 
-      $ep("a").each((i, el) => {
-        const href = $ep(el).attr("href") || "";
-        if (href.includes("/links/")) {
-          redirectLink = href;
-        }
+      // ටේබල් එක ඇතුළේ තියෙන හැම ඩවුන්ලෝඩ් රෝ එකක්ම පරීක්ෂා කරනවා
+      $ep(".downloads_table tr, .links_table tr").each((i, el) => {
+          const rowLink = $ep(el).find("a[href*='/links/']").attr("href");
+          const quality = $ep(el).find(".quality, td:nth-child(2)").text().trim() || "Download";
+          
+          if (rowLink) {
+              linkPages.push({ quality, rowLink });
+          }
       });
 
-      // පියවර B: '/links/' පේජ් එක ඇතුළට ගොස් Google Drive ලින්ක් එක ඇද ගැනීම
-      if (redirectLink) {
-        const { data: linkHtml } = await axios.get(redirectLink, { headers });
-        const gdriveRegex = /https:\/\/drive\.google\.com\/[a-zA-Z0-9?%=\-_/.]+/g;
-        const matches = linkHtml.match(gdriveRegex) || [];
-        const dl_links = [];
+      // පියවර 2: හැම ලින්ක් පේජ් එකකටම ගිහින් Google Drive ලින්ක් එක අරගන්නවා
+      const final_links = [];
 
-        matches.forEach(link => {
-          const fileIdMatch = link.match(/[-\w]{25,}/);
-          if (fileIdMatch) {
-            const finalLink = `https://drive.usercontent.google.com/download?id=${fileIdMatch[0]}&export=download&authuser=0`;
-            if (!dl_links.some(l => l.direct_link === finalLink)) {
-              dl_links.push({ quality: "HD Download", direct_link: finalLink });
-            }
-          }
-        });
+      for (const item of linkPages) {
+          try {
+              const { data: linkHtml } = await axios.get(item.rowLink, { headers });
+              const gdriveRegex = /https:\/\/drive\.google\.com\/[a-zA-Z0-9?%=\-_/.]+/g;
+              const matches = linkHtml.match(gdriveRegex) || [];
 
-        return res.json({ status: true, download_links: dl_links });
+              matches.forEach(link => {
+                  const fileIdMatch = link.match(/[-\w]{25,}/);
+                  if (fileIdMatch) {
+                      const directLink = `https://drive.usercontent.google.com/download?id=${fileIdMatch[0]}&export=download&authuser=0`;
+                      if (!final_links.some(l => l.direct_link === directLink)) {
+                          final_links.push({ 
+                              quality: item.quality, 
+                              direct_link: directLink 
+                          });
+                      }
+                  }
+              });
+          } catch (e) { continue; }
       }
 
-      return res.json({ status: false, message: "No download links found" });
+      return res.json({ status: true, download_links: final_links });
     }
 
   } catch (err) {
