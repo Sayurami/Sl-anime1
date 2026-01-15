@@ -10,10 +10,8 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- 1. ANIME SEARCH ----------------
+    // ---------------- 1. SEARCH (Anime & Movies) ----------------
     if (action === "search") {
-      if (!query) return res.status(400).json({ status: false, message: "query missing" });
-      
       const searchUrl = `https://animeclub2.com/?s=${encodeURIComponent(query)}`;
       const { data } = await axios.get(searchUrl, { headers });
       const $ = cheerio.load(data);
@@ -24,26 +22,24 @@ export default async function handler(req, res) {
           title: $(el).find(".title").text().trim(),
           link: $(el).find("a").attr("href"),
           image: $(el).find("img").attr("src"),
-          year: $(el).find(".year").text().trim()
+          type: $(el).find(".sh_type").text().trim() || "Movie/TV" 
         });
       });
       return res.json({ status: true, data: results });
     }
 
-    // ---------------- 2. GET EPISODES LIST ----------------
-    if (action === "anime") {
-      if (!url) return res.status(400).json({ status: false, message: "url missing" });
-
+    // ---------------- 2. GET DETAILS (Episodes or Movie Info) ----------------
+    if (action === "details" || action === "anime") {
       const { data } = await axios.get(url, { headers });
       const $ = cheerio.load(data);
       const episodes = [];
 
+      // සීරීස් එකක් නම් එපිසෝඩ් ටික ගන්නවා
       $(".episodios li").each((i, el) => {
         episodes.push({
           ep_num: $(el).find(".numerando").text().trim(),
           title: $(el).find(".episodiotitle a").text().trim(),
-          link: $(el).find(".episodiotitle a").attr("href"),
-          date: $(el).find(".date").text().trim()
+          link: $(el).find(".episodiotitle a").attr("href")
         });
       });
 
@@ -52,37 +48,33 @@ export default async function handler(req, res) {
         data: {
           title: $(".data h1").text().trim(),
           image: $(".poster img").attr("src"),
-          episodes
+          is_movie: episodes.length === 0, // එපිසෝඩ් නැත්නම් ඒක මූවී එකක්
+          episodes: episodes.length > 0 ? episodes : null
         }
       });
     }
 
-    // ---------------- 3. DOWNLOAD LINKS (480p & 720p) ----------------
+    // ---------------- 3. DOWNLOAD (Movies & Episodes දෙකටම) ----------------
     if (action === "download") {
-      if (!url) return res.status(400).json({ status: false, message: "url missing" });
-
-      const { data: epHtml } = await axios.get(url, { headers });
-      const $ep = cheerio.load(epHtml);
+      const { data: pageHtml } = await axios.get(url, { headers });
+      const $page = cheerio.load(pageHtml);
       const linkPages = [];
 
-      // පියවර A: පේජ් එකේ තියෙන සියලුම කොලිටි සහ '/links/' URL සොයා ගැනීම
-      $ep(".downloads_table tr, .links_table tr").each((i, el) => {
-          const rowLink = $ep(el).find("a[href*='/links/']").attr("href");
-          let qualityTxt = $ep(el).find(".quality, td:nth-child(2)").first().text().trim();
+      // පේජ් එකේ තියෙන ඔක්කොම ඩවුන්ලෝඩ් රෝ පරීක්ෂා කරනවා
+      $page(".downloads_table tr, .links_table tr, .post-body tr").each((i, el) => {
+          const rowLink = $page(el).find("a[href*='/links/']").attr("href");
+          let qTxt = $page(el).find(".quality, td:nth-child(2)").first().text().trim();
           
-          // Quality එක පිරිසිදු කිරීම
-          if (qualityTxt.includes("720p")) qualityTxt = "HD 720p";
-          else if (qualityTxt.includes("480p")) qualityTxt = "SD 480p";
-          else qualityTxt = "Download";
+          if (qTxt.includes("720p")) qTxt = "HD 720p";
+          else if (qTxt.includes("1080p")) qTxt = "Full HD 1080p";
+          else if (qTxt.includes("480p")) qTxt = "SD 480p";
+          else qTxt = "Download";
 
-          if (rowLink) {
-              linkPages.push({ quality: qualityTxt, rowLink });
-          }
+          if (rowLink) linkPages.push({ quality: qTxt, rowLink });
       });
 
       const final_links = [];
 
-      // පියවර B: හැම ලින්ක් පේජ් එකටම ගොස් ඇත්තම G-Drive ලින්ක් එක ලබාගැනීම
       for (const item of linkPages) {
           try {
               const { data: linkHtml } = await axios.get(item.rowLink, { headers });
@@ -90,26 +82,18 @@ export default async function handler(req, res) {
               const matches = linkHtml.match(gdriveRegex) || [];
 
               matches.forEach(link => {
-                  const fileIdMatch = link.match(/[-\w]{25,}/);
-                  if (fileIdMatch) {
-                      const directLink = `https://drive.usercontent.google.com/download?id=${fileIdMatch[0]}&export=download&authuser=0`;
-                      
+                  const fileId = link.match(/[-\w]{25,}/);
+                  if (fileId) {
+                      const directLink = `https://drive.usercontent.google.com/download?id=${fileId[0]}&export=download&authuser=0`;
                       if (!final_links.some(l => l.direct_link === directLink)) {
-                          final_links.push({ 
-                              quality: item.quality, 
-                              direct_link: directLink 
-                          });
+                          final_links.push({ quality: item.quality, direct_link: directLink });
                       }
                   }
               });
           } catch (e) { continue; }
       }
 
-      return res.json({ 
-        status: true, 
-        results: final_links.length,
-        download_links: final_links 
-      });
+      return res.json({ status: true, download_links: final_links });
     }
 
   } catch (err) {
