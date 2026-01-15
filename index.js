@@ -10,79 +10,73 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- 1. ANIME SEARCH (සෙවීම) ----------------
+    // ---------------- 1. SEARCH ----------------
     if (action === "search") {
       const searchUrl = `https://animeclub2.com/?s=${encodeURIComponent(query)}`;
       const { data } = await axios.get(searchUrl, { headers });
       const $ = cheerio.load(data);
       const results = [];
-
       $("article").each((i, el) => {
         results.push({
           title: $(el).find(".title").text().trim(),
           link: $(el).find("a").attr("href"),
-          image: $(el).find("img").attr("src"),
-          year: $(el).find(".year").text().trim()
+          image: $(el).find("img").attr("src")
         });
       });
       return res.json({ status: true, data: results });
     }
 
-    // ---------------- 2. GET EPISODES (එපිසෝඩ් ලිස්ට් එක) ----------------
+    // ---------------- 2. GET EPISODES ----------------
     if (action === "anime") {
-      if (!url) return res.status(400).json({ status: false, message: "url missing" });
-
       const { data } = await axios.get(url, { headers });
       const $ = cheerio.load(data);
       const episodes = [];
-
-      // එපිසෝඩ් ලිස්ට් එක අහුලගමු
       $(".episodios li").each((i, el) => {
         episodes.push({
           ep_num: $(el).find(".numerando").text().trim(),
-          title: $(el).find(".episodiotitle a").text().trim(),
-          link: $(el).find(".episodiotitle a").attr("href"),
-          date: $(el).find(".date").text().trim()
+          link: $(el).find(".episodiotitle a").attr("href")
         });
       });
-
-      return res.json({
-        status: true,
-        data: {
-          title: $(".data h1").text().trim(),
-          episodes
-        }
-      });
+      return res.json({ status: true, data: { episodes } });
     }
 
-    // ---------------- 3. GET DOWNLOAD LINK (ඩවුන්ලෝඩ් ලින්ක්) ----------------
+    // ---------------- 3. DOWNLOAD (MULTI-STEP SCAN) ----------------
     if (action === "download") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
-      const { data: htmlSource } = await axios.get(url, { headers });
-      
-      // Google Drive ලින්ක් එකක් පේජ් එකේ කොහේ තිබුණත් අහුලගන්න Regex එකක් පාවිච්චි කරමු
-      const gdriveRegex = /https:\/\/drive\.google\.com\/[a-zA-Z0-9?%=\-_/.]+/g;
-      const matches = htmlSource.match(gdriveRegex) || [];
-      const dl_links = [];
+      // පියවර A: එපිසෝඩ් පේජ් එකට ගොස් '/links/' URL එක සොයා ගැනීම
+      const { data: epHtml } = await axios.get(url, { headers });
+      const $ep = cheerio.load(epHtml);
+      let redirectLink = "";
 
-      matches.forEach(link => {
-        let finalLink = link;
-        // Google Drive link එක Direct Download link එකක් බවට පත් කිරීම
-        const fileIdMatch = link.match(/[-\w]{25,}/);
-        if (fileIdMatch) {
-          finalLink = `https://drive.usercontent.google.com/download?id=${fileIdMatch[0]}&export=download&authuser=0`;
-        }
-
-        if (!dl_links.some(l => l.direct_link === finalLink)) {
-          dl_links.push({
-            quality: "HD Download",
-            direct_link: finalLink
-          });
+      $ep("a").each((i, el) => {
+        const href = $ep(el).attr("href") || "";
+        if (href.includes("/links/")) {
+          redirectLink = href;
         }
       });
 
-      return res.json({ status: true, download_links: dl_links });
+      // පියවර B: '/links/' පේජ් එක ඇතුළට ගොස් Google Drive ලින්ක් එක ඇද ගැනීම
+      if (redirectLink) {
+        const { data: linkHtml } = await axios.get(redirectLink, { headers });
+        const gdriveRegex = /https:\/\/drive\.google\.com\/[a-zA-Z0-9?%=\-_/.]+/g;
+        const matches = linkHtml.match(gdriveRegex) || [];
+        const dl_links = [];
+
+        matches.forEach(link => {
+          const fileIdMatch = link.match(/[-\w]{25,}/);
+          if (fileIdMatch) {
+            const finalLink = `https://drive.usercontent.google.com/download?id=${fileIdMatch[0]}&export=download&authuser=0`;
+            if (!dl_links.some(l => l.direct_link === finalLink)) {
+              dl_links.push({ quality: "HD Download", direct_link: finalLink });
+            }
+          }
+        });
+
+        return res.json({ status: true, download_links: dl_links });
+      }
+
+      return res.json({ status: false, message: "No download links found" });
     }
 
   } catch (err) {
