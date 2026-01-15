@@ -10,59 +10,79 @@ export default async function handler(req, res) {
 
     if (!action) return res.status(400).json({ status: false, message: "action missing" });
 
-    // ---------------- 1. SEARCH ----------------
+    // ---------------- 1. ANIME SEARCH ----------------
     if (action === "search") {
+      if (!query) return res.status(400).json({ status: false, message: "query missing" });
+      
       const searchUrl = `https://animeclub2.com/?s=${encodeURIComponent(query)}`;
       const { data } = await axios.get(searchUrl, { headers });
       const $ = cheerio.load(data);
       const results = [];
+
       $("article").each((i, el) => {
         results.push({
           title: $(el).find(".title").text().trim(),
           link: $(el).find("a").attr("href"),
-          image: $(el).find("img").attr("src")
+          image: $(el).find("img").attr("src"),
+          year: $(el).find(".year").text().trim()
         });
       });
       return res.json({ status: true, data: results });
     }
 
-    // ---------------- 2. GET EPISODES ----------------
+    // ---------------- 2. GET EPISODES LIST ----------------
     if (action === "anime") {
+      if (!url) return res.status(400).json({ status: false, message: "url missing" });
+
       const { data } = await axios.get(url, { headers });
       const $ = cheerio.load(data);
       const episodes = [];
+
       $(".episodios li").each((i, el) => {
         episodes.push({
           ep_num: $(el).find(".numerando").text().trim(),
           title: $(el).find(".episodiotitle a").text().trim(),
-          link: $(el).find(".episodiotitle a").attr("href")
+          link: $(el).find(".episodiotitle a").attr("href"),
+          date: $(el).find(".date").text().trim()
         });
       });
-      return res.json({ status: true, data: { episodes } });
+
+      return res.json({
+        status: true,
+        data: {
+          title: $(".data h1").text().trim(),
+          image: $(".poster img").attr("src"),
+          episodes
+        }
+      });
     }
 
-    // ---------------- 3. DOWNLOAD (QUALITY දෙකම ගන්න විදිහ) ----------------
+    // ---------------- 3. DOWNLOAD LINKS (480p & 720p) ----------------
     if (action === "download") {
       if (!url) return res.status(400).json({ status: false, message: "url missing" });
 
-      // පියවර 1: එපිසෝඩ් පේජ් එකට ගිහින් එතන තියෙන ඔක්කොම '/links/' URL ටික ගන්නවා
       const { data: epHtml } = await axios.get(url, { headers });
       const $ep = cheerio.load(epHtml);
       const linkPages = [];
 
-      // ටේබල් එක ඇතුළේ තියෙන හැම ඩවුන්ලෝඩ් රෝ එකක්ම පරීක්ෂා කරනවා
+      // පියවර A: පේජ් එකේ තියෙන සියලුම කොලිටි සහ '/links/' URL සොයා ගැනීම
       $ep(".downloads_table tr, .links_table tr").each((i, el) => {
           const rowLink = $ep(el).find("a[href*='/links/']").attr("href");
-          const quality = $ep(el).find(".quality, td:nth-child(2)").text().trim() || "Download";
+          let qualityTxt = $ep(el).find(".quality, td:nth-child(2)").first().text().trim();
           
+          // Quality එක පිරිසිදු කිරීම
+          if (qualityTxt.includes("720p")) qualityTxt = "HD 720p";
+          else if (qualityTxt.includes("480p")) qualityTxt = "SD 480p";
+          else qualityTxt = "Download";
+
           if (rowLink) {
-              linkPages.push({ quality, rowLink });
+              linkPages.push({ quality: qualityTxt, rowLink });
           }
       });
 
-      // පියවර 2: හැම ලින්ක් පේජ් එකකටම ගිහින් Google Drive ලින්ක් එක අරගන්නවා
       const final_links = [];
 
+      // පියවර B: හැම ලින්ක් පේජ් එකටම ගොස් ඇත්තම G-Drive ලින්ක් එක ලබාගැනීම
       for (const item of linkPages) {
           try {
               const { data: linkHtml } = await axios.get(item.rowLink, { headers });
@@ -73,6 +93,7 @@ export default async function handler(req, res) {
                   const fileIdMatch = link.match(/[-\w]{25,}/);
                   if (fileIdMatch) {
                       const directLink = `https://drive.usercontent.google.com/download?id=${fileIdMatch[0]}&export=download&authuser=0`;
+                      
                       if (!final_links.some(l => l.direct_link === directLink)) {
                           final_links.push({ 
                               quality: item.quality, 
@@ -84,7 +105,11 @@ export default async function handler(req, res) {
           } catch (e) { continue; }
       }
 
-      return res.json({ status: true, download_links: final_links });
+      return res.json({ 
+        status: true, 
+        results: final_links.length,
+        download_links: final_links 
+      });
     }
 
   } catch (err) {
