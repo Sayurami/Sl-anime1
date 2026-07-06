@@ -3,8 +3,8 @@ import * as cheerio from "cheerio";
 
 const SCRAPER_API_KEY = "f9ea79e7589a5989220a0c27509c0bf0";
 
-function scraperUrl(targetUrl) {
-  return `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(targetUrl)}`;
+function scraperUrl(targetUrl, render = false) {
+  return `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}${render ? "&render=true" : ""}&url=${encodeURIComponent(targetUrl)}`;
 }
 
 export default async function handler(req, res) {
@@ -15,9 +15,7 @@ export default async function handler(req, res) {
 
     // 1. Search
     if (action === "search") {
-      const { data } = await axios.get(
-        scraperUrl(`https://animeclub2.com/?s=${encodeURIComponent(query)}`)
-      );
+      const { data } = await axios.get(scraperUrl(`https://animeclub2.com/?s=${encodeURIComponent(query)}`));
       const $ = cheerio.load(data);
       const results = [];
       $("article").each((i, el) => {
@@ -31,17 +29,18 @@ export default async function handler(req, res) {
       return res.json({ status: true, data: results });
     }
 
-    // 2. Details
+    // 2. Details (render=true — episodes load via JS)
     if (action === "details" || action === "anime") {
-      const { data } = await axios.get(scraperUrl(url));
+      const { data } = await axios.get(scraperUrl(url, true));
       const $ = cheerio.load(data);
       const episodes = [];
-      $(".episodios li").each((i, el) => {
-        episodes.push({
-          ep_num: $(el).find(".numerando").text().trim(),
-          title: $(el).find(".episodiotitle a").text().trim(),
-          link: $(el).find(".episodiotitle a").attr("href")
-        });
+      $("ul.episodios li").each((i, el) => {
+        const link = $(el).find("a.ep-card-link").attr("href") ?? "";
+        const epNum = $(el).find(".ep-number").text().trim();
+        const epTitle = $(el).find(".ep-title").text().trim();
+        if (link) {
+          episodes.push({ ep_num: epNum, title: epTitle, link });
+        }
       });
       return res.json({
         status: true,
@@ -59,7 +58,6 @@ export default async function handler(req, res) {
       const { data: pageHtml } = await axios.get(scraperUrl(url));
       const $page = cheerio.load(pageHtml);
       const linkPages = [];
-
       $page("a[href*='/links/']").each((i, el) => {
         const rowLink = $page(el).attr("href");
         let qTxt = $page(el).closest("tr").find("td").text().trim() || $page(el).text().trim();
@@ -71,7 +69,6 @@ export default async function handler(req, res) {
           linkPages.push({ quality: qTxt, rowLink });
         }
       });
-
       const final_links = [];
       for (const item of linkPages) {
         try {
@@ -88,7 +85,6 @@ export default async function handler(req, res) {
           }
         } catch (e) { continue; }
       }
-
       return res.json({ status: true, results: final_links.length, download_links: final_links });
     }
 
